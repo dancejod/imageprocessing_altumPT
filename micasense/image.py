@@ -98,6 +98,7 @@ class Image(object):
         self.bits_per_pixel = self.meta.bits_per_pixel()
 
         # vignette can be either a radial poly or a 2D polynomial
+        #DD: these won't initialize for altum-pt, skipped vignetting instead
         self.vignette_center = self.meta.vignette_center()
         self.vignette_polynomial = self.meta.vignette_polynomial()
 
@@ -300,7 +301,10 @@ class Image(object):
         # apply image correction methods to raw image
         V, x, y = self.vignette()
         R = 1.0 / (1.0 + a2 * y / self.exposure_time - a3 * y)
-        L = V * R * (image_raw - self.black_level)
+        
+        #DD: skip vignette matrix entirely here
+        #L = V * R * (image_raw - self.black_level)
+        L = R * (image_raw - self.black_level)
         L[L < 0] = 0
         max_raw_dn = float(2 ** self.bits_per_pixel)
         intensity_image = L.astype(float) / (self.gain * self.exposure_time * max_raw_dn)
@@ -323,7 +327,11 @@ class Image(object):
             # apply image correction methods to raw image
             V, x, y = self.vignette()
             R = 1.0 / (1.0 + a2 * y / self.exposure_time - a3 * y)
-            L = V * R * (image_raw - self.black_level)
+            
+            #DD: skip vignette matrix entirely here
+            #L = V * R * (image_raw - self.black_level)
+            L = R * (image_raw - self.black_level)
+            
             L[L < 0] = 0
             max_raw_dn = float(2 ** self.bits_per_pixel)
             radiance_image = L.astype(float) / (self.gain * self.exposure_time) * a1 / max_raw_dn
@@ -379,6 +387,9 @@ class Image(object):
                 ey = e[2 * i + 1]
                 p2 += c * xv ** ex * yv ** ey
             vignette = (1. / p2).T
+        #DD: no correction for altum pt
+        else:
+            vignette = np.ones((x_dim, y_dim))
         return vignette, x, y
 
     def undistorted_radiance(self, force_recompute=False):
