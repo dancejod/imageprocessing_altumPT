@@ -7,6 +7,7 @@ import numpy as np
 import subprocess
 import micasense.utils as msutils
 import tifffile
+import logging
 from timeit import default_timer as timer
 from datetime import timedelta
 from pathlib import Path
@@ -17,6 +18,17 @@ from tqdm import tqdm
 #TODO: make more robust for additional bands
 
 def run(*args):
+    logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(message)s",
+    handlers=[
+        logging.FileHandler(Path(args[0]) / "log.txt", mode="w"),
+        logging.StreamHandler(sys.stdout)
+    ]
+    
+)
+    logger = logging.getLogger()
+
     def compute_reflectance_factor_with_panel(panel_cap, reference_reflectances):
         try:
             for i, val in enumerate(reference_reflectances):
@@ -26,7 +38,7 @@ def run(*args):
                 radianceReflectanceFactor = val / radiancePanelRegion.mean()
             return radianceReflectanceFactor
         except Exception:
-            print("No calibration panel detected")
+            logger.warning("No calibration panel detected")
             return None
 
     root_path = Path(args[0])
@@ -59,22 +71,23 @@ def run(*args):
     flightImageNames = imageNames[5:-5]
     out_paths = []
 
+    radianceReflectanceFactorBefore = compute_reflectance_factor_with_panel(panelCapBefore, ALTUMPT_REFLECTANCE_BY_BAND)
+    radianceReflectanceFactorAfter = compute_reflectance_factor_with_panel(panelCapAfter, ALTUMPT_REFLECTANCE_BY_BAND)
+    
+    if radianceReflectanceFactorBefore is None and radianceReflectanceFactorAfter is None:
+        pass
+    elif radianceReflectanceFactorBefore is not None and radianceReflectanceFactorAfter is not None:
+        interpolate = True
+    else:
+        interpolate = False
+        radianceReflectanceFactor = radianceReflectanceFactorBefore if radianceReflectanceFactorBefore is not None else radianceReflectanceFactorAfter
+
     time_start = timer()
-    print(f"{'[Calibration]':<15} Started calibrating flight images")
+    logger.info(f"{'[Calibration]':<15} Started calibrating flight images")
 
     for i in tqdm(range(0, len(flightImageNames), 5), desc="Processing flight images"):
         imgs = flightImageNames[i:i+5]
         imgsCap = capture.Capture.from_filelist(imgs)
-        radianceReflectanceFactorBefore = compute_reflectance_factor_with_panel(panelCapBefore, ALTUMPT_REFLECTANCE_BY_BAND)
-        radianceReflectanceFactorAfter = compute_reflectance_factor_with_panel(panelCapAfter, ALTUMPT_REFLECTANCE_BY_BAND)
-        
-        if radianceReflectanceFactorBefore is None and radianceReflectanceFactorAfter is None:
-            pass
-        elif radianceReflectanceFactorBefore is not None and radianceReflectanceFactorAfter is not None:
-            interpolate = True
-        else:
-            interpolate = False
-            radianceReflectanceFactor = radianceReflectanceFactorBefore if radianceReflectanceFactorBefore is not None else radianceReflectanceFactorAfter
 
         for b, image in enumerate(imgs):
             if interpolate:
@@ -99,15 +112,15 @@ def run(*args):
             out_paths.append(out)
 
     time_end = timer()
-    print(f"{'[Calibration]':<15} Calibrated in: {timedelta(seconds=time_end - time_start)}")
+    logger.info(f"{'[Calibration]':<15} Calibrated in: {timedelta(seconds=time_end - time_start)}")
 
     exiftime_start = timer()
-    print(f"{'[EXIF]':<15} Updating metadata of calibrated images...")
+    logger.info(f"{'[EXIF]':<15} Updating metadata of calibrated images...")
     subprocess.run(["exiftool", "-config", "altumconfigexif.cfg", "-tagsfromfile", f"{root_path}/%f.tif", outpath, "-xmp:all","-gps:all", "-overwrite_original"])
     exiftime_end = timer()
-    print(f"{'[EXIF]':<15} Image metadata updated in: {timedelta(seconds=exiftime_end - exiftime_start)}")
+    logger.info(f"{'[EXIF]':<15} Image metadata updated in: {timedelta(seconds=exiftime_end - exiftime_start)}")
 
-    print(f"{'[Done]':<15} Successfully calibrated {len(flightImageNames)} flight images")
+    logger.info(f"{'[Done]':<15} Successfully calibrated {len(flightImageNames)} flight images")
 
 if __name__ == "__main__":
     run(sys.argv[1])
