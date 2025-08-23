@@ -34,19 +34,13 @@ def run(*args):
     )
     logger = logging.getLogger()
 
-    def compute_reflectance_factor_with_panel(panel_cap, reference_reflectances):
+    def retrieve_panel_irradiances(panel_cap, ref_reflectances):
         try:
-            for i, val in enumerate(reference_reflectances):
-                radiancePanelImage = panel_cap.images[i].radiance()
-                ur, ul, ll, lr = panel_cap.images[i].panel_region
-                radiancePanelRegion = radiancePanelImage[lr[1]:ul[1], ul[0]:lr[0]]
-                radianceReflectanceFactor = val / radiancePanelRegion.mean()
-            return radianceReflectanceFactor
+            panel_irradiances = panel_cap.panel_irradiance(ref_reflectances)
+            return panel_irradiances
         except Exception:
-            logger.warning("No calibration panel detected")
+            logger.warning("Calibration panel not detected")
             return None
-
-    
 
     #our panel reflectances
     ALTUMPT_REFLECTANCE_BY_BAND = [0.508, 0.509, 0.509, 0.509, 0.506]
@@ -59,30 +53,29 @@ def run(*args):
 
     #before flight panel images
     panelNamesBefore = imageNames[:5]
-    
-    #panelNamesBefore = [x.as_posix() for x in panelNamesBefore]
     panelCapBefore = capture.Capture.from_filelist(panelNamesBefore)
 
     #after flight panel images
     panelNamesAfter = imageNames[-5:]
-    #panelNamesAfter = [x.as_posix() for x in panelNamesAfter]
     panelCapAfter = capture.Capture.from_filelist(panelNamesAfter)
 
-    
+    panelIrradiancesBefore = retrieve_panel_irradiances(panelCapBefore, ALTUMPT_REFLECTANCE_BY_BAND)
+    panelIrradiancesAfter = retrieve_panel_irradiances(panelCapAfter, ALTUMPT_REFLECTANCE_BY_BAND)
 
-    flightImageNames = imageNames[5:-5]
-    out_paths = []
-
-    radianceReflectanceFactorBefore = compute_reflectance_factor_with_panel(panelCapBefore, ALTUMPT_REFLECTANCE_BY_BAND)
-    radianceReflectanceFactorAfter = compute_reflectance_factor_with_panel(panelCapAfter, ALTUMPT_REFLECTANCE_BY_BAND)
-    
-    if radianceReflectanceFactorBefore is None and radianceReflectanceFactorAfter is None:
-        pass
-    elif radianceReflectanceFactorBefore is not None and radianceReflectanceFactorAfter is not None:
-        interpolate = True
+    if panelIrradiancesBefore is None and panelIrradiancesAfter is None:
+        logger.critical("Houston, we have a problem (no panels detected for current flight)")
+        exit()
+    elif panelIrradiancesBefore is not None and panelIrradiancesAfter is not None:
+        both_panels_present = True
+        logger.info("Both panels present for this flight")
+        flightImageNames = imageNames[5:-5]
     else:
-        interpolate = False
-        radianceReflectanceFactor = radianceReflectanceFactorBefore if radianceReflectanceFactorBefore is not None else radianceReflectanceFactorAfter
+        both_panels_present = False
+        logger.warning("One of the before/after flight panels is not present, working with available panel")
+        panelIrradiances = panelIrradiancesAfter if panelIrradiancesAfter is not None else panelIrradiancesBefore
+        flightImageNames = imageNames
+        
+    out_paths = []
 
     time_start = timer()
     logger.info(f"{'[Calibration]':<15} Started calibrating flight images")
@@ -91,25 +84,21 @@ def run(*args):
         imgs = flightImageNames[i:i+5]
         imgsCap = capture.Capture.from_filelist(imgs)
 
+        if both_panels_present:
+            band_irradiances = [np.interp(imgsCap.utc_time().timestamp(), [panelCapBefore.utc_time().timestamp(), panelCapAfter.utc_time().timestamp()], [
+            panelIrradiancesBefore[b], panelIrradiancesAfter[b]
+        ]) for b in range(len(imgsCap.images))]
+        
+        else:
+            band_irradiances = panelIrradiances
+
+        flightReflectanceImages = imgsCap.reflectance(band_irradiances)
+
         for b, image in enumerate(imgs):
-            if interpolate:
-                #linearly interpolate reflectance factor for current band and flight img
-                radianceReflectanceFactor = np.interp(imgsCap.utc_time().timestamp(),
-                                                    [
-                                                        panelCapBefore.utc_time().timestamp(),
-                                                        panelCapAfter.utc_time().timestamp(),
-                                                    ], [
-                                                        radianceReflectanceFactorBefore, radianceReflectanceFactorAfter
-                                                    ])
-                
-            flightImage = plt.imread(image)
-            flightRadianceImage, _, _, _ = msutils.raw_image_to_radiance(metadata.Metadata(panelNamesBefore[b]), flightImage)
-            flightReflectanceImage = flightRadianceImage * radianceReflectanceFactor
-            
-            in_path = Path(imgs[b])
+            in_path = Path(image)
             out = outpath / in_path.name
             
-            tifffile.imwrite(out, flightReflectanceImage.astype("float32"))
+            tifffile.imwrite(out, flightReflectanceImages[b].astype("float32"))
 
             out_paths.append(out)
 
