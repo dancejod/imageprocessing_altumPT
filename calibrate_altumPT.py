@@ -18,15 +18,20 @@ from tqdm import tqdm
 #TODO: make more robust for additional bands
 
 def run(*args):
+    root_path = Path(args[0])
+
+    outpath = root_path.parent / "images"
+    outpath.mkdir(exist_ok=True)
+
     logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(message)s",
-    handlers=[
-        logging.FileHandler(Path(args[0]) / "log.txt", mode="w"),
-        logging.StreamHandler(sys.stdout)
-    ]
-    
-)
+        level=logging.INFO,
+        format="%(asctime)s %(message)s",
+        handlers=[
+            logging.FileHandler(outpath / "log.txt", mode="w"),
+            logging.StreamHandler(sys.stdout)
+        ],
+        force=True
+    )
     logger = logging.getLogger()
 
     def compute_reflectance_factor_with_panel(panel_cap, reference_reflectances):
@@ -41,10 +46,7 @@ def run(*args):
             logger.warning("No calibration panel detected")
             return None
 
-    root_path = Path(args[0])
-
-    outpath = root_path / "calibrated"
-    outpath.mkdir(exist_ok=True)
+    
 
     #our panel reflectances
     ALTUMPT_REFLECTANCE_BY_BAND = [0.508, 0.509, 0.509, 0.509, 0.506]
